@@ -3,7 +3,8 @@
 # _scripts/README.md for what each script does; config is read from ./.env
 # (see .env.example).
 
-.PHONY: help check start test down restart clean admin-password prereqs-manual
+.PHONY: help check start test down restart clean admin-password prereqs-manual platform-images \
+        compose-export compose-generate images-build-export images-import-start
 
 # wrapper to the docker/cli-tools/repo/Makefile but runs the command in a container for portability
 %:
@@ -23,6 +24,14 @@ help:
 	@echo "  admin-password  print the amAdmin password"
 	@echo "  prereqs-manual  install cert-manager/ingress/secret-agent one at a time (for restricted"
 	@echo "                  networks; ARGS=--pull to only cache charts for an offline install)"
+	@echo "  platform-images load am/idm/ds/ig/amster/UI images into minikube (for restricted networks;"
+	@echo "                  ARGS=--pull to only cache images for an offline install)"
+	@echo ""
+	@echo "docker-compose (alternative to minikube - see _scripts/README.md):"
+	@echo "  compose-export      export secrets/config from a working minikube deployment"
+	@echo "  compose-generate    turn that export into docker-compose.yaml"
+	@echo "  images-build-export build platform images from source, export as tar.gz"
+	@echo "  images-import-start import tar.gz images + docker compose up"
 
 check:
 	@./_scripts/check.sh
@@ -47,3 +56,18 @@ admin-password:
 
 prereqs-manual:
 	@./_scripts/prereqs-manual.sh $(ARGS)
+
+platform-images:
+	@./_scripts/platform-images.sh $(ARGS)
+
+compose-export:
+	@./_scripts/compose-export.sh
+
+compose-generate:
+	@./_scripts/compose-generate.sh
+
+images-build-export:
+	@./_scripts/images-build-export.sh $(ARGS)
+
+images-import-start:
+	@./_scripts/images-import-start.sh
