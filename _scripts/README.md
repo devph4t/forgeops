@@ -56,15 +56,20 @@ make prereqs-manual   # ARGS=--pull to only cache charts for an offline install
 - `admin-password.sh` is a read-only lookup — prints the `amAdmin` password
   from the `am-env-secrets` Secret in `$K8S_NAMESPACE`.
 - `prereqs-manual.sh` is an alternative to `forgeops prereqs` for networks
-  with a policy that blocks some of the chart repo hosts it needs in one
-  shot — it fetches and installs cert-manager, ingress and secret-agent one
-  at a time via separate `helm pull`s into a local cache, printing exactly
-  which host each step needs. Supports a fully offline install too: run
-  `./_scripts/prereqs-manual.sh --pull` on a machine with network access to
-  download every chart into `$CHARTS_DIR`, copy that directory to the
-  restricted machine, then re-run without `--pull`. Set `PREREQS_MANUAL=true`
-  in `.env` to make `startup.sh` use it automatically instead of
-  `forgeops prereqs`. See `./_scripts/prereqs-manual.sh -h`.
+  with a policy that blocks some of the hosts it needs in one shot — it
+  fetches and installs cert-manager, ingress and secret-agent one at a time
+  via separate `helm pull`s into a local cache, printing exactly which host
+  each step needs. It also pre-loads every container image each chart needs
+  straight into minikube (`minikube image load`) — the chart fetch and the
+  cluster pulling the chart's images are two separate network hops, and a
+  pod stuck at "0 of 1 replicas available" / ImagePullBackOff after prereqs
+  "succeeded" is usually the second one. Supports a fully offline install
+  too: run `./_scripts/prereqs-manual.sh --pull` on a machine with network
+  access to download every chart *and* image into `$CHARTS_DIR`, copy that
+  directory to the restricted machine, then re-run without `--pull` - no
+  network needed at all at that point. Set `PREREQS_MANUAL=true` in `.env`
+  to make `startup.sh` use it automatically instead of `forgeops prereqs`.
+  See `./_scripts/prereqs-manual.sh -h`.
 
 `lib.sh` holds the shared helpers (`.env` loading, minikube/kubectl context,
 confirmation prompts) and isn't meant to be run directly.
