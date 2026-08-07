@@ -99,3 +99,10 @@ confirmation prompts) and isn't meant to be run directly.
   ingress. Either way, point `$DOMAIN` at the printed IP (or `127.0.0.1` in
   the proxy case — the Windows hosts file if you're accessing from a browser
   on Windows over WSL2) and `clean.sh`/`--full` removes those containers.
+  If docker fails to publish the port with something like `Error response
+  from daemon: ... /forwards/expose returned unexpected status 500` (a
+  Docker Desktop port-forwarder bug on WSL2/Windows, not a forgeops issue),
+  set `INGRESS_ACCESS_MODE=kubectl-port-forward` in `.env` instead — it
+  forwards the same ports via a backgrounded `kubectl port-forward` (no
+  extra image needed), and `down.sh`/`clean.sh`/`restart.sh` all know how to
+  stop/restart it.
