@@ -12,15 +12,28 @@ Install and have on `$PATH`: `docker`, `kubectl`, `helm`, `minikube`,
 ## Usage
 
 ```
-cp .env.example .env   # edit ENV / K8S_NAMESPACE / K8S_SIZE / DOMAIN
-./_scripts/check.sh    # verify tools/dependencies are installed and healthy
-./_scripts/startup.sh  # first-time setup: venv, minikube, prereqs, deploy
-./_scripts/test.sh     # smoke-test: curls /am and /platform, checks for a healthy response
-./_scripts/down.sh     # pause: stops minikube + the host proxy, keeps all data
-./_scripts/restart.sh  # resume after down.sh, or after a reboot
-./_scripts/clean.sh    # tear down the namespace + prereqs (add --full to also delete the minikube profile)
-## show admin password
-kubectl get secret am-env-secrets -n ping-local -o jsonpath='{.data.AM_PASSWORDS_AMADMIN_CLEAR}' | base64 -d
+cp .env.example .env         # edit ENV / K8S_NAMESPACE / K8S_SIZE / DOMAIN
+./_scripts/check.sh          # verify tools/dependencies are installed and healthy
+./_scripts/startup.sh        # first-time setup: venv, minikube, prereqs, deploy
+./_scripts/test.sh           # smoke-test: curls /am and /platform, checks for a healthy response
+./_scripts/down.sh           # pause: stops minikube + the host proxy, keeps all data
+./_scripts/restart.sh        # resume after down.sh, or after a reboot
+./_scripts/clean.sh          # tear down the namespace + prereqs (add --full to also delete the minikube profile)
+./_scripts/admin-password.sh # print the amAdmin password
+./_scripts/prereqs-manual.sh # alternative to `forgeops prereqs` for restricted networks (see below)
+```
+
+Or via the `Makefile` at the repo root (run `make help` for the list):
+
+```bash
+make check
+make start
+make test
+make down
+make restart
+make clean            # add ARGS=--full to also delete the minikube profile
+make admin-password
+make prereqs-manual   # ARGS=--pull to only cache charts for an offline install
 ```
 
 - `check.sh` is a read-only preflight check — it verifies `docker`/`kubectl`/`helm`/`minikube`/`python3` are installed, the docker daemon is reachable, `.env` has the required values, and reports whether the machine is ready for `startup.sh`. Exits `0` when there are no blocking issues, `1` otherwise, so it's safe to use as a gate in onboarding docs or CI.
@@ -40,6 +53,18 @@ kubectl get secret am-env-secrets -n ping-local -o jsonpath='{.data.AM_PASSWORDS
   isn't already running - see below) and re-applies/waits.
 - `clean.sh` prompts for confirmation before deleting anything; pass `-y` to
   skip that (e.g. in CI).
+- `admin-password.sh` is a read-only lookup — prints the `amAdmin` password
+  from the `am-env-secrets` Secret in `$K8S_NAMESPACE`.
+- `prereqs-manual.sh` is an alternative to `forgeops prereqs` for networks
+  with a policy that blocks some of the chart repo hosts it needs in one
+  shot — it fetches and installs cert-manager, ingress and secret-agent one
+  at a time via separate `helm pull`s into a local cache, printing exactly
+  which host each step needs. Supports a fully offline install too: run
+  `./_scripts/prereqs-manual.sh --pull` on a machine with network access to
+  download every chart into `$CHARTS_DIR`, copy that directory to the
+  restricted machine, then re-run without `--pull`. Set `PREREQS_MANUAL=true`
+  in `.env` to make `startup.sh` use it automatically instead of
+  `forgeops prereqs`. See `./_scripts/prereqs-manual.sh -h`.
 
 `lib.sh` holds the shared helpers (`.env` loading, minikube/kubectl context,
 confirmation prompts) and isn't meant to be run directly.

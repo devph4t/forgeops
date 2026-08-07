@@ -46,6 +46,27 @@ load_env() {
   MINIKUBE_MEMORY=${MINIKUBE_MEMORY:-8000mb}
   MINIKUBE_DISK=${MINIKUBE_DISK:-40g}
   INGRESS=${INGRESS:-traefik}
+  PREREQS_MANUAL=${PREREQS_MANUAL:-false}
+}
+
+# Installs cert-manager/ingress/secret-agent via either `forgeops prereqs`
+# (default) or, when PREREQS_MANUAL=true in .env, prereqs-manual.sh - which
+# fetches each chart with a separate `helm pull` into a local cache instead
+# of one `helm upgrade --repo` call, for networks that block some of the
+# chart repo hosts `forgeops prereqs` needs. See prereqs-manual.sh -h.
+install_prereqs() {
+  if [[ "$PREREQS_MANUAL" == true ]]; then
+    "$SCRIPTS_DIR/prereqs-manual.sh"
+    return
+  fi
+
+  local ingress_flag=""
+  if [[ "$INGRESS" == "nginx" ]]; then
+    ingress_flag="--nginx"
+  elif [[ "$INGRESS" == "haproxy" ]]; then
+    ingress_flag="--haproxy"
+  fi
+  ./bin/forgeops prereqs $ingress_flag
 }
 
 # Resolve the --small/--medium/--large/--single-instance flag forgeops env expects.
@@ -116,7 +137,11 @@ verify_prereqs_healthy() {
     read -r ns comp <<< "$entry"
     if ! kubectl get ns "$ns" >/dev/null 2>&1; then
       warn "Namespace '$ns' is missing even though prereqs reported it installed - forcing a real (re)install."
-      ./bin/forgeops prereqs --upgrade "$comp"
+      if [[ "$PREREQS_MANUAL" == true ]]; then
+        "$SCRIPTS_DIR/prereqs-manual.sh"
+      else
+        ./bin/forgeops prereqs --upgrade "$comp"
+      fi
     fi
   done
 }
