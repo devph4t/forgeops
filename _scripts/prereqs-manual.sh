@@ -87,8 +87,11 @@ fetch_chart() {
 
   info "$pretty: fetching chart from $repo"
   if [[ "$repo" =~ ^oci:// ]]; then
+    # $repo for OCI charts is already the full path to the chart itself
+    # (e.g. oci://.../charts/secret-agent) - not a repo root to append
+    # $chart to, unlike the https:// index-based repos below.
     check_host "$repo"
-    helm pull "$repo/$chart" ${version:+--version="$version"} --untar --untardir "$dir"
+    helm pull "$repo" ${version:+--version="$version"} --untar --untardir "$dir"
   else
     check_host "$repo"
     helm pull "$chart" --repo "$repo" ${version:+--version="$version"} --untar --untardir "$dir"
