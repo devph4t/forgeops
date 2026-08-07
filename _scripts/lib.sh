@@ -230,18 +230,45 @@ verify_prereqs_healthy() {
 }
 
 # PID file for the background `kubectl port-forward` ensure_ingress_reachable
-# starts when INGRESS_ACCESS_MODE=kubectl-port-forward.
+# starts for host port $1 (443 or 80) when INGRESS_ACCESS_MODE=
+# kubectl-port-forward. One pidfile per port - see start_kubectl_port_forward
+# for why they're independent.
 kpf_pidfile() {
-  printf '%s/.kubectl-port-forward-%s.pid' "$SCRIPTS_DIR" "$MINIKUBE_PROFILE"
+  printf '%s/.kubectl-port-forward-%s-%s.pid' "$SCRIPTS_DIR" "$MINIKUBE_PROFILE" "$1"
 }
 
-# Kills the background `kubectl port-forward` from a previous run, if any.
+# Kills the background `kubectl port-forward`(s) from a previous run, if any.
 stop_kubectl_port_forward() {
-  local pidfile; pidfile=$(kpf_pidfile)
-  if [[ -f "$pidfile" ]]; then
-    kill "$(cat "$pidfile")" >/dev/null 2>&1 || true
+  local port pidfile
+  for port in 443 80; do
+    pidfile=$(kpf_pidfile "$port")
+    if [[ -f "$pidfile" ]]; then
+      kill "$(cat "$pidfile")" >/dev/null 2>&1 || true
+      rm -f "$pidfile"
+    fi
+  done
+}
+
+# Starts one `kubectl port-forward` for host port $3, returning non-zero
+# (and leaving a log at the pidfile's path with .log instead of .pid) if it
+# didn't come up.
+start_kubectl_port_forward_one() {
+  local ing_release=$1 ing_ns=$2 port=$3 pidfile logfile
+  pidfile=$(kpf_pidfile "$port")
+  logfile="${pidfile%.pid}.log"
+
+  nohup kubectl port-forward -n "$ing_ns" "svc/$ing_release" "$port:$port" \
+    --address 127.0.0.1 >"$logfile" 2>&1 &
+  disown
+  echo $! > "$pidfile"
+
+  sleep 2
+  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     rm -f "$pidfile"
+    warn "kubectl port-forward for port $port exited immediately - see $logfile"
+    return 1
   fi
+  ok "Host port $port now forwards to the cluster ingress via kubectl (pid $(cat "$pidfile"))."
 }
 
 # Alternative to the docker/alpine-socat proxy below, for hosts where
@@ -249,31 +276,36 @@ stop_kubectl_port_forward() {
 # from daemon: ... /forwards/expose returned unexpected status 500" - a
 # known Docker Desktop (WSL2/Windows) port-forwarder bug unrelated to
 # anything forgeops does. Needs only kubectl (no extra image), but the
-# forward dies with the process, so it's tracked via a pidfile and
+# forward dies with the process, so it's tracked via pidfiles and
 # re-established by ensure_ingress_reachable/restart.sh rather than
 # `--restart unless-stopped` like the docker containers.
+#
+# 443 and 80 are forwarded as two independent `kubectl port-forward`
+# processes rather than one `svc/x 443:443 80:80` call: kubectl aborts the
+# *entire* command if even one of several requested ports can't bind (e.g.
+# something else already holds host port 80), which would otherwise take
+# down 443 - the one that actually matters for reaching the platform - along
+# with it.
 start_kubectl_port_forward() {
-  local ing_release=$1 ing_ns=$2 pidfile logfile
-  pidfile=$(kpf_pidfile)
-  logfile="${pidfile%.pid}.log"
+  local ing_release=$1 ing_ns=$2 https_ok=true http_ok=true
   stop_kubectl_port_forward
 
   info "Forwarding host ports 80/443 -> $ing_release.$ing_ns via kubectl port-forward"
-  nohup kubectl port-forward -n "$ing_ns" "svc/$ing_release" 443:443 80:80 \
-    --address 127.0.0.1 >"$logfile" 2>&1 &
-  disown
-  echo $! > "$pidfile"
+  start_kubectl_port_forward_one "$ing_release" "$ing_ns" 443 || https_ok=false
+  start_kubectl_port_forward_one "$ing_release" "$ing_ns" 80 || http_ok=false
 
-  sleep 2
-  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    warn "kubectl port-forward exited immediately - see $logfile"
-    echo "    (binding ports 80/443 usually needs a privileged process; if it's a"
+  if [[ "$https_ok" == false ]]; then
+    warn "Couldn't forward port 443 - host access isn't set up (re-run later if needed)."
+    echo "    (binding ports <1024 usually needs a privileged process; if it's a"
     echo "     permission error, either run with elevated privileges or set"
-    echo "     net.ipv4.ip_unprivileged_port_start=0, e.g. via sysctl)"
-    rm -f "$pidfile"
+    echo "     net.ipv4.ip_unprivileged_port_start=0, e.g. via sysctl. If 443 alone"
+    echo "     worked before, something else is likely holding that port instead -"
+    echo "     check its .log file above.)"
     return 1
   fi
-  ok "Host ports 80/443 now forward to the cluster ingress via kubectl (pid $(cat "$pidfile"))."
+  if [[ "$http_ok" == false ]]; then
+    warn "Port 80 didn't forward (see above) - https://\$DOMAIN will still work, plain http:// won't."
+  fi
   echo "Point $DOMAIN at 127.0.0.1 in your hosts file (the Windows hosts file if you're on WSL2)."
 }
 
