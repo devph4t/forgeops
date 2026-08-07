@@ -130,6 +130,13 @@ platform, and sets up host access to `https://$DOMAIN`. See
 (`test.sh`, `down.sh`, `restart.sh`, `clean.sh`, `admin-password.sh`) and the
 equivalent `make` targets (`make help`).
 
+> On a network whose policy blocks some of the chart repo hosts
+> `forgeops prereqs` needs in one call, set `PREREQS_MANUAL=true` in `.env`.
+> `startup.sh` will then install cert-manager/ingress/secret-agent one at a
+> time via [`_scripts/prereqs-manual.sh`](_scripts/README.md), which also
+> supports a fully offline install (`--pull` on a machine with network access
+> to cache the charts, then copy them over). See `./_scripts/prereqs-manual.sh -h`.
+
 ```mermaid
 sequenceDiagram
     participant Dev as Developer

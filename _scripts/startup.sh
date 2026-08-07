@@ -36,13 +36,7 @@ kubectl_ctx
 
 # 3. Cluster prereqs (cert-manager, ingress, secret-agent)
 info "Installing cluster prereqs (cert-manager, $INGRESS ingress, secret-agent)"
-INGRESS_FLAG=""
-if [[ "$INGRESS" == "nginx" ]]; then
-  INGRESS_FLAG="--nginx"
-elif [[ "$INGRESS" == "haproxy" ]]; then
-  INGRESS_FLAG="--haproxy"
-fi
-./bin/forgeops prereqs $INGRESS_FLAG
+install_prereqs
 verify_prereqs_healthy
 
 # secret-agent's admission webhook must be up before `apply` can create/patch
