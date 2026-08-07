@@ -63,8 +63,6 @@ for arg in "$@"; do
   esac
 done
 
-CHARTS_DIR=${CHARTS_DIR:-$SCRIPTS_DIR/.chart-cache}
-IMAGES_DIR="$CHARTS_DIR/images"
 mkdir -p "$CHARTS_DIR" "$IMAGES_DIR"
 info "Chart cache: $CHARTS_DIR"
 
@@ -85,11 +83,6 @@ check_host() {
 chart_dir() {
   local chart=$1 version=$2
   printf '%s/%s-%s/%s' "$CHARTS_DIR" "$chart" "${version:-latest}" "$chart"
-}
-
-# Local tar path a given container image is cached at.
-image_tar_path() {
-  printf '%s/%s.tar' "$IMAGES_DIR" "$(printf '%s' "$1" | tr '/:' '__')"
 }
 
 # Fetches chart $2 (version $4) from repo $3 into chart_dir(), or reuses it

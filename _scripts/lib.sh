@@ -47,6 +47,89 @@ load_env() {
   MINIKUBE_DISK=${MINIKUBE_DISK:-40g}
   INGRESS=${INGRESS:-traefik}
   PREREQS_MANUAL=${PREREQS_MANUAL:-false}
+  CHARTS_DIR=${CHARTS_DIR:-$SCRIPTS_DIR/.chart-cache}
+  IMAGES_DIR="$CHARTS_DIR/images"
+  # docker (default) | kubectl-port-forward - see ensure_ingress_reachable.
+  INGRESS_ACCESS_MODE=${INGRESS_ACCESS_MODE:-docker}
+}
+
+# Local tar path a given container image is cached at (shared by
+# prereqs-manual.sh and anything else here that needs an image offline,
+# e.g. ensure_ingress_reachable's alpine/socat).
+image_tar_path() {
+  mkdir -p "$IMAGES_DIR"
+  printf '%s/%s.tar' "$IMAGES_DIR" "$(printf '%s' "$1" | tr '/:' '__')"
+}
+
+# Pulls + saves $1 into the image cache for later offline use (used by
+# --pull-style flows). Warns and returns non-zero (doesn't die) if the
+# registry can't be reached, so callers can keep going with other images.
+cache_image() {
+  local image=$1 tar_path
+  tar_path=$(image_tar_path "$image")
+  if [[ -f "$tar_path" ]]; then
+    ok "Image already cached ($image)"
+    return 0
+  fi
+  info "Pulling image $image"
+  if docker pull "$image" >/dev/null 2>&1; then
+    docker save "$image" -o "$tar_path"
+    ok "Image cached at $tar_path"
+    return 0
+  fi
+  warn "Can't reach '${image%%/*}' to pull $image."
+  return 1
+}
+
+# Makes sure $1 is present in the local docker daemon (for a plain `docker
+# run`, as opposed to inside minikube - see ensure_minikube_image), using
+# the cache or a direct pull as available. Warns and returns non-zero
+# (doesn't die) if it can't be obtained.
+ensure_docker_image() {
+  local image=$1 tar_path
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  tar_path=$(image_tar_path "$image")
+  if [[ -f "$tar_path" ]]; then
+    info "Loading cached image ($image)"
+    docker load -i "$tar_path" >/dev/null
+    return 0
+  fi
+  if docker pull "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  warn "Can't get docker image '$image' (registry '${image%%/*}' unreachable from this machine)."
+  echo "    -> on a machine that can reach it, run:"
+  echo "         docker pull $image && docker save $image -o \"$tar_path\""
+  echo "       then copy that file into \$IMAGES_DIR/ here and re-run."
+  return 1
+}
+
+# Makes sure $1 is present inside the minikube node itself (not just the
+# host docker daemon) - that's what kubelet actually pulls from, a separate
+# hop from the host. Uses the cache, an already-loaded copy, or a direct
+# pull as available. Warns and returns non-zero (doesn't die) if it can't
+# be obtained.
+ensure_minikube_image() {
+  local image=$1 tar_path
+  if minikube image ls -p "$MINIKUBE_PROFILE" 2>/dev/null | grep -qx "$image"; then
+    return 0
+  fi
+  tar_path=$(image_tar_path "$image")
+  if [[ -f "$tar_path" ]]; then
+    info "Loading cached image into minikube ($image)"
+    minikube image load "$tar_path" -p "$MINIKUBE_PROFILE"
+    return 0
+  fi
+  if docker pull "$image" >/dev/null 2>&1 && minikube image load "$image" -p "$MINIKUBE_PROFILE"; then
+    return 0
+  fi
+  warn "Can't get image '$image' into minikube (registry '${image%%/*}' unreachable from this machine)."
+  echo "    -> on a machine that can reach it, run:"
+  echo "         docker pull $image && docker save $image -o \"$tar_path\""
+  echo "       then copy that file into \$IMAGES_DIR/ here and re-run."
+  return 1
 }
 
 # Installs cert-manager/ingress/secret-agent via either `forgeops prereqs`
@@ -146,12 +229,65 @@ verify_prereqs_healthy() {
   done
 }
 
+# PID file for the background `kubectl port-forward` ensure_ingress_reachable
+# starts when INGRESS_ACCESS_MODE=kubectl-port-forward.
+kpf_pidfile() {
+  printf '%s/.kubectl-port-forward-%s.pid' "$SCRIPTS_DIR" "$MINIKUBE_PROFILE"
+}
+
+# Kills the background `kubectl port-forward` from a previous run, if any.
+stop_kubectl_port_forward() {
+  local pidfile; pidfile=$(kpf_pidfile)
+  if [[ -f "$pidfile" ]]; then
+    kill "$(cat "$pidfile")" >/dev/null 2>&1 || true
+    rm -f "$pidfile"
+  fi
+}
+
+# Alternative to the docker/alpine-socat proxy below, for hosts where
+# publishing a container port fails with something like "Error response
+# from daemon: ... /forwards/expose returned unexpected status 500" - a
+# known Docker Desktop (WSL2/Windows) port-forwarder bug unrelated to
+# anything forgeops does. Needs only kubectl (no extra image), but the
+# forward dies with the process, so it's tracked via a pidfile and
+# re-established by ensure_ingress_reachable/restart.sh rather than
+# `--restart unless-stopped` like the docker containers.
+start_kubectl_port_forward() {
+  local ing_release=$1 ing_ns=$2 pidfile logfile
+  pidfile=$(kpf_pidfile)
+  logfile="${pidfile%.pid}.log"
+  stop_kubectl_port_forward
+
+  info "Forwarding host ports 80/443 -> $ing_release.$ing_ns via kubectl port-forward"
+  nohup kubectl port-forward -n "$ing_ns" "svc/$ing_release" 443:443 80:80 \
+    --address 127.0.0.1 >"$logfile" 2>&1 &
+  disown
+  echo $! > "$pidfile"
+
+  sleep 2
+  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    warn "kubectl port-forward exited immediately - see $logfile"
+    echo "    (binding ports 80/443 usually needs a privileged process; if it's a"
+    echo "     permission error, either run with elevated privileges or set"
+    echo "     net.ipv4.ip_unprivileged_port_start=0, e.g. via sysctl)"
+    rm -f "$pidfile"
+    return 1
+  fi
+  ok "Host ports 80/443 now forward to the cluster ingress via kubectl (pid $(cat "$pidfile"))."
+  echo "Point $DOMAIN at 127.0.0.1 in your hosts file (the Windows hosts file if you're on WSL2)."
+}
+
 # Docker's minikube driver puts the cluster in its own docker network. On
 # native Linux that network is usually directly routable from the host, but
 # on WSL2 / Docker Desktop it typically isn't. Detect which case we're in:
 # if direct routing works, just tell the caller the minikube IP to put in
-# /etc/hosts; otherwise publish 80/443 on the host via two small docker
-# containers that forward into the cluster's ingress NodePorts. Idempotent.
+# /etc/hosts; otherwise publish 80/443 on the host, either via two small
+# docker containers that forward into the cluster's ingress NodePorts
+# (default), or via `kubectl port-forward` when INGRESS_ACCESS_MODE=
+# kubectl-port-forward (set this if docker's port publishing fails with a
+# "/forwards/expose returned unexpected status 500" error - a Docker
+# Desktop bug, not something this script can work around from the docker
+# side). Idempotent.
 ensure_ingress_reachable() {
   local ing_release ing_ns https_np http_np mip name_https name_80
 
@@ -175,13 +311,26 @@ ensure_ingress_reachable() {
 
   if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${mip}/${https_np}" 2>/dev/null; then
     docker rm -f "$name_https" "$name_80" >/dev/null 2>&1 || true
+    stop_kubectl_port_forward
     ok "minikube IP $mip is directly reachable from this host."
     echo "Add this to your hosts file:  $mip  $DOMAIN"
     return
   fi
 
   info "minikube IP isn't directly routable from this host (common on WSL2/Docker Desktop)."
+
+  if [[ "$INGRESS_ACCESS_MODE" == "kubectl-port-forward" ]]; then
+    docker rm -f "$name_https" "$name_80" >/dev/null 2>&1 || true
+    start_kubectl_port_forward "$ing_release" "$ing_ns"
+    return
+  fi
+
+  if ! ensure_docker_image alpine/socat; then
+    warn "Can't set up the host-access proxy without alpine/socat - skipping (re-run later if needed)."
+    return
+  fi
   info "Publishing host ports 80/443 -> cluster ingress via docker instead."
+  stop_kubectl_port_forward
   docker rm -f "$name_https" "$name_80" >/dev/null 2>&1 || true
   docker run -d --name "$name_https" --network "$MINIKUBE_PROFILE" -p 443:443 --restart unless-stopped \
     alpine/socat "TCP-LISTEN:443,fork,reuseaddr" "TCP:${mip}:${https_np}" >/dev/null
@@ -191,15 +340,19 @@ ensure_ingress_reachable() {
   echo "Point $DOMAIN at 127.0.0.1 in your hosts file (the Windows hosts file if you're on WSL2)."
 }
 
-# Removes the docker proxy containers ensure_ingress_reachable may have created.
+# Removes the docker proxy containers / kubectl port-forward
+# ensure_ingress_reachable may have created.
 remove_ingress_proxy() {
   docker rm -f "fgo-proxy-${MINIKUBE_PROFILE}-443" "fgo-proxy-${MINIKUBE_PROFILE}-80" >/dev/null 2>&1 || true
+  stop_kubectl_port_forward
 }
 
-# Stops (without removing) the docker proxy containers, for a pause/resume
-# cycle via down.sh + restart.sh instead of a full teardown.
+# Stops (without removing) the docker proxy containers / kills the kubectl
+# port-forward, for a pause/resume cycle via down.sh + restart.sh instead
+# of a full teardown.
 stop_ingress_proxy() {
   docker stop "fgo-proxy-${MINIKUBE_PROFILE}-443" "fgo-proxy-${MINIKUBE_PROFILE}-80" >/dev/null 2>&1 || true
+  stop_kubectl_port_forward
 }
 
 # Retries a command a few times with a delay between attempts. Useful right

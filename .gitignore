@@ -47,3 +47,5 @@ pyenv.cfg
 *~
 lib/dependencies
 .polaris/
+_scripts/.chart-cache/
+_scripts/.kubectl-port-forward-*
