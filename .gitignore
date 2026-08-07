@@ -49,3 +49,8 @@ lib/dependencies
 .polaris/
 _scripts/.chart-cache/
 _scripts/.kubectl-port-forward-*
+_scripts/.compose-images/
+# Contains real passwords/keys/keystores exported from a live deployment -
+# never commit this.
+_scripts/compose/
+/docker-compose.yaml

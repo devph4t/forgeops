@@ -51,6 +51,13 @@ kubectl apply -f etc/resources/selfsigned-issuer.yaml >/dev/null
 ./bin/forgeops env --env-name "$ENV" --fqdn "$DOMAIN" --namespace "$K8S_NAMESPACE" \
   --cluster-issuer default-issuer "$(size_flag)"
 
+# On restricted networks, also pre-load the platform's own images (am, idm,
+# ds, ig, amster, the UIs...) into minikube before apply schedules any pods -
+# install_prereqs above only covers cert-manager/ingress/secret-agent.
+if [[ "$PREREQS_MANUAL" == true ]]; then
+  "$SCRIPTS_DIR/platform-images.sh" || true
+fi
+
 # 5. Deploy
 info "Applying platform to namespace '$K8S_NAMESPACE'"
 retry 10 6 ./bin/forgeops apply --env-name "$ENV" --namespace "$K8S_NAMESPACE" --create-namespace
