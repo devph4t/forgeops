@@ -54,11 +54,11 @@ check_bin() {
 }
 
 echo "Tools"
-check_bin docker   "install: https://docs.docker.com/get-docker/"
-check_bin kubectl  "install: https://kubernetes.io/docs/tasks/tools/#kubectl"
-check_bin helm     "install: https://helm.sh/docs/intro/install/"
-check_bin minikube "install: https://minikube.sigs.k8s.io/docs/start/"
-check_bin python3  "install python 3.9.6+"
+check_bin docker   "install: ./_scripts/install-deps.sh (or https://docs.docker.com/get-docker/)"
+check_bin kubectl  "install: ./_scripts/install-deps.sh (or https://kubernetes.io/docs/tasks/tools/#kubectl)"
+check_bin helm     "install: ./_scripts/install-deps.sh (or https://helm.sh/docs/intro/install/)"
+check_bin minikube "install: ./_scripts/install-deps.sh (or https://minikube.sigs.k8s.io/docs/start/)"
+check_bin python3  "install: ./_scripts/install-deps.sh (or python 3.9.6+ via your package manager)"
 
 echo
 echo "Runtime status"

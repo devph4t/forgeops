@@ -1,0 +1,76 @@
+# Hand-maintained fixes layered on top of the GENERATED docker-compose.yaml.
+#
+# docker-compose.yaml is produced by _scripts/compose-generate.sh and is
+# gitignored - anything edited there is lost on the next regeneration. This
+# file is auto-loaded by `docker compose` and is safe to commit, so the two
+# things the generator can't know about live here:
+#
+#   1. DS network aliases  - AM is configured for StatefulSet pod DNS
+#      (ds-idrepo-0.ds-idrepo). Compose only gives us `ds-idrepo`, and the DS
+#      cert's SANs are *.ds / *.ds-idrepo / *.ds-cts - a wildcard does NOT
+#      match the bare label, so renaming the target would break LDAPS
+#      hostname verification. The alias resolves AND matches the wildcard.
+#
+#   2. ingress - the platform is path-routed under a single origin
+#      (AM_URL=/am, IDM_REST_URL=/openidm, PLATFORM_ADMIN_URL=/platform ...).
+#      The generated per-service host ports are for debugging one component
+#      in isolation; browsers must use this proxy or same-origin XHR,
+#      cookies and OAuth redirects all break.
+#
+# See _plan/README.md for the reasoning and _plan/TROUBLESHOOTING.md when it
+# misbehaves.
+
+services:
+  # --- 1. StatefulSet pod DNS, reproduced as docker network aliases --------
+  ds-idrepo:
+    networks:
+      default:
+        aliases:
+          - ds-idrepo-0.ds-idrepo   # AM_STORES_USER_SERVERS
+          - ds-idrepo-0
+
+  ds-cts:
+    networks:
+      default:
+        aliases:
+          - ds-cts-0.ds-cts         # AM_STORES_CTS_SERVERS
+          - ds-cts-0
+
+  # --- 2. Ingress: the k8s Ingress rules, as a compose service -------------
+  # traefik:v3.7.10 is already cached locally (the minikube prereqs pull it),
+  # and it's the same ingress controller the k8s path uses, so the routing
+  # semantics match. Run ./_scripts/proxy/gen-cert.sh before the first start.
+  ingress:
+    image: ${TRAEFIK_IMAGE:-traefik}:${TRAEFIK_TAG:-v3.7.10}
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - ${PROXY_HTTP_PORT:-80}:80
+      - ${PROXY_HTTPS_PORT:-443}:443
+    volumes:
+      - ./_scripts/proxy/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./_scripts/proxy/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./_scripts/proxy/certs:/certs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - traefik healthcheck --ping || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    # service_started, not service_healthy: Traefik resolves backends per
+    # request, so it comes up fine ahead of them and recovers on its own.
+    # Gating on health here would just serialise an already-slow bring-up.
+    depends_on:
+      am:
+        condition: service_started
+      idm:
+        condition: service_started
+      admin-ui:
+        condition: service_started
+      login-ui:
+        condition: service_started
+      end-user-ui:
+        condition: service_started
+    restart: unless-stopped

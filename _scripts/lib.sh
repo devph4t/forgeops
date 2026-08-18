@@ -169,6 +169,19 @@ ingress_release_and_namespace() {
   esac
 }
 
+# Helm 3 rolls a failed install/upgrade back with --atomic; Helm 4 renamed
+# that flag to --rollback-on-failure. Used by the step-*.sh scripts that
+# call `helm upgrade --install` directly (instead of `forgeops prereqs`).
+helm_rollback_flag() {
+  local major
+  major=$(helm version --template '{{.Version}}' 2>/dev/null | sed 's/^v//' | cut -d. -f1)
+  if [[ "$major" -lt 4 ]]; then
+    echo "--atomic"
+  else
+    echo "--rollback-on-failure"
+  fi
+}
+
 kubectl_ctx() {
   kubectl config use-context "$MINIKUBE_PROFILE" >/dev/null
 }

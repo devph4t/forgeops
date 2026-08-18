@@ -7,14 +7,18 @@ machine. Config is read from `.env` at the repo root (see `.env.example`).
 ## Prerequisites
 
 Install and have on `$PATH`: `docker`, `kubectl`, `helm`, `minikube`,
-`python3` (3.9.6+).
+`python3` (3.9.6+). On Linux, `./_scripts/install-deps.sh` installs whichever
+of these are missing.
 
 ## Usage
 
 ```
+./_scripts/install-deps.sh   # (Linux) install docker/kubectl/helm/minikube/python3 if missing
 cp .env.example .env         # edit ENV / K8S_NAMESPACE / K8S_SIZE / DOMAIN
 ./_scripts/check.sh          # verify tools/dependencies are installed and healthy
 ./_scripts/startup.sh        # first-time setup: venv, minikube, prereqs, deploy
+./_scripts/start-step.sh     # same as startup.sh, run step-by-step via _scripts/step-*.sh
+./_scripts/start-manual.sh   # same as start-step.sh, prereqs fetched by curl instead of Helm/forgeops
 ./_scripts/test.sh           # smoke-test: curls /am and /platform, checks for a healthy response
 ./_scripts/down.sh           # pause: stops minikube + the host proxy, keeps all data
 ./_scripts/restart.sh        # resume after down.sh, or after a reboot
@@ -27,8 +31,11 @@ cp .env.example .env         # edit ENV / K8S_NAMESPACE / K8S_SIZE / DOMAIN
 Or via the `Makefile` at the repo root (run `make help` for the list):
 
 ```bash
+make install-deps     # (Linux) install docker/kubectl/helm/minikube/python3 if missing
 make check
 make start
+make start-step       # same as 'start', run step-by-step via _scripts/step-*.sh
+make start-manual     # same as 'start-step', prereqs fetched by curl instead of Helm/forgeops
 make test
 make down
 make restart
@@ -38,6 +45,7 @@ make prereqs-manual   # ARGS=--pull to only cache charts for an offline install
 make platform-images  # ARGS=--pull to only cache images for an offline install
 ```
 
+- `install-deps.sh` (Linux only) installs whichever of `docker`/`kubectl`/`helm`/`minikube`/`python3` are missing: docker via its official convenience script (and adds you to the `docker` group), kubectl/minikube as the official binaries into `/usr/local/bin`, helm via its official install script, python3 via the system package manager (`apt-get`/`dnf`/`yum`/`pacman`). Idempotent - already-installed tools are skipped. Needs sudo; prompts for confirmation before installing (skip with `-y`).
 - `check.sh` is a read-only preflight check — it verifies `docker`/`kubectl`/`helm`/`minikube`/`python3` are installed, the docker daemon is reachable, `.env` has the required values, and reports whether the machine is ready for `startup.sh`. Exits `0` when there are no blocking issues, `1` otherwise, so it's safe to use as a gate in onboarding docs or CI.
 - `startup.sh` is safe to re-run any time — every step (venv creation,
   `forgeops configure`, `minikube start`, `forgeops prereqs`, `forgeops env`,
@@ -45,6 +53,37 @@ make platform-images  # ARGS=--pull to only cache images for an offline install
   actually reachable from this host (see "Reaching the platform" below), and
   self-heals a couple of sharp edges in `forgeops prereqs`/`env` (a stale
   cert-manager CRD check, and the interactive TLS-issuer prompt).
+- `start-step.sh` does exactly what `startup.sh` does, but as nine separate
+  `step-NN-*.sh` scripts run in order (`step-01-python-venv.sh` ...
+  `step-09-setup-ingress-access.sh`) instead of one monolithic script. Each
+  step is independently re-runnable and idempotent, same as `startup.sh`
+  overall - useful when one step fails: fix the underlying issue and re-run
+  just that script (e.g. `./_scripts/step-04-install-ingress.sh`) instead of
+  starting over. cert-manager, the ingress controller and secret-agent are
+  separate steps (3/4/5) even though `forgeops prereqs` can install all
+  three in one call, specifically so any one of them can be retried alone.
+  Steps 3/4/5 themselves are standalone too - direct `helm upgrade
+  --install` calls against each chart's repo, not `./bin/forgeops prereqs`.
+- `start-manual.sh` is `start-step.sh` with a different prereqs path: steps
+  3/4/5 are replaced by `step-manual-01/02/03-*.sh`, which fetch
+  cert-manager/traefik by `curl`ing the chart's `.tgz` directly (bypassing
+  Helm's chart-repo/index.yaml discovery, not just the `forgeops` CLI) and
+  `helm install` from the local unpacked chart - useful on networks where a
+  plain HTTPS GET works but repo-index discovery doesn't. secret-agent is
+  the one exception: its chart is OCI-only (no flat, curl-able `.tgz` URL),
+  so `step-manual-03-install-secret-agent.sh` uses `helm pull --untar`
+  instead - still no `forgeops` CLI, just a different unavoidable fetch
+  mechanism. `step-manual-04-verify-prereqs.sh` mirrors `step-06` minus its
+  `forgeops`-based self-heal, so the whole manual path stays forgeops-free.
+  Downloaded charts are cached under `$CHARTS_DIR/manual/` (same cache dir
+  `prereqs-manual.sh` uses). `CM_VERSION`/`TRAEFIK_VERSION` must be a real,
+  pinned chart version here (the download URL is built from it) - there's
+  no "latest" like the Helm-repo path has; override in `.env` if the
+  defaults baked into the scripts go stale. Steps 1/2 (venv, minikube) and
+  7/8/9 (env/apply/ingress-access) are unchanged from `start-step.sh` -
+  those still use the forgeops CLI (`forgeops env`/`forgeops apply` are
+  python-based templating/deploy orchestration, not a Helm chart install,
+  so there's no curl-and-unpack equivalent for them).
 - `test.sh` is a read-only smoke test — curls `https://$DOMAIN/am` and
   `/platform` and checks for a healthy (HTTP 200) response. Exits `0`/`1`
   accordingly, so it's usable as a post-deploy check in CI too.

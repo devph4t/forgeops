@@ -1,0 +1,103 @@
+# Traefik DYNAMIC config: the Kubernetes Ingress routing table, translated.
+#
+# Source of truth is the charts - re-check with:
+#   grep -rn "path:" charts/identity-platform/templates/*-ingress.yaml
+#
+#   /am/XUI   -> login-ui       (charts/.../login-ui-ingress.yaml)
+#   /am       -> am             (charts/.../am-ingress.yaml)
+#   /openidm  -> idm            (charts/.../idm-ingress.yaml)
+#   /upload   -> idm
+#   /export   -> idm
+#   /admin    -> idm
+#   /platform -> admin-ui       (charts/.../admin-ui-ingress.yaml)
+#   /enduser  -> end-user-ui    (charts/.../end-user-ui-ingress.yaml)
+#
+# Priorities are explicit rather than relying on Traefik's default
+# longest-rule-wins, because the /am/XUI vs /am overlap is the one that
+# silently breaks login if it resolves the wrong way. Higher wins.
+#
+# Backends are plain http on container port 8080 - TLS is terminated here,
+# exactly as the k8s ingress did it.
+
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/tls.crt
+        keyFile: /certs/tls.key
+
+http:
+  routers:
+    # Must outrank the /am router below.
+    login-ui:
+      rule: "PathPrefix(`/am/XUI`) || PathPrefix(`/login`)"
+      priority: 100
+      entryPoints: [websecure]
+      service: login-ui
+      tls: {}
+
+    am:
+      rule: "PathPrefix(`/am`)"
+      priority: 50
+      entryPoints: [websecure]
+      service: am
+      tls: {}
+
+    idm:
+      rule: "PathPrefix(`/openidm`) || PathPrefix(`/upload`) || PathPrefix(`/export`) || PathPrefix(`/admin`)"
+      priority: 50
+      entryPoints: [websecure]
+      service: idm
+      tls: {}
+
+    admin-ui:
+      rule: "PathPrefix(`/platform`)"
+      priority: 50
+      entryPoints: [websecure]
+      service: admin-ui
+      tls: {}
+
+    end-user-ui:
+      rule: "PathPrefix(`/enduser`)"
+      priority: 50
+      entryPoints: [websecure]
+      service: end-user-ui
+      tls: {}
+
+    # Bare / has no ingress rule in k8s either; send it somewhere useful.
+    root:
+      rule: "Path(`/`)"
+      priority: 10
+      entryPoints: [websecure]
+      service: admin-ui
+      middlewares: [root-to-platform]
+      tls: {}
+
+  middlewares:
+    root-to-platform:
+      redirectRegex:
+        regex: "^https?://([^/]+)/?$"
+        replacement: "https://${1}/platform/"
+        permanent: false
+
+  services:
+    am:
+      loadBalancer:
+        servers:
+          - url: "http://am:8080"
+    idm:
+      loadBalancer:
+        servers:
+          - url: "http://idm:8080"
+    admin-ui:
+      loadBalancer:
+        servers:
+          - url: "http://admin-ui:8080"
+    login-ui:
+      loadBalancer:
+        servers:
+          - url: "http://login-ui:8080"
+    end-user-ui:
+      loadBalancer:
+        servers:
+          - url: "http://end-user-ui:8080"

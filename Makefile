@@ -3,7 +3,7 @@
 # _scripts/README.md for what each script does; config is read from ./.env
 # (see .env.example).
 
-.PHONY: help check start test down restart clean admin-password prereqs-manual platform-images \
+.PHONY: help install-deps check start start-step start-manual test down restart clean admin-password prereqs-manual platform-images \
         compose-export compose-generate images-build-export images-import-start
 
 # wrapper to the docker/cli-tools/repo/Makefile but runs the command in a container for portability
@@ -15,8 +15,12 @@
 
 help:
 	@echo "Targets:"
+	@echo "  install-deps    (Linux) install docker/kubectl/helm/minikube/python3 if missing"
 	@echo "  check           verify tools/dependencies are installed and healthy"
 	@echo "  start           first-time setup: venv, minikube, prereqs, deploy"
+	@echo "  start-step      same as 'start', run step-by-step via _scripts/step-*.sh"
+	@echo "  start-manual    same as 'start-step', but cert-manager/traefik/secret-agent are"
+	@echo "                  fetched by curl (no Helm repo, no forgeops CLI) - see _scripts/step-manual-*.sh"
 	@echo "  test            smoke-test the running platform"
 	@echo "  down            pause: stop minikube + host proxy, keep all data"
 	@echo "  restart         resume after 'make down' or a reboot"
@@ -33,11 +37,20 @@ help:
 	@echo "  images-build-export build platform images from source, export as tar.gz"
 	@echo "  images-import-start import tar.gz images + docker compose up"
 
+install-deps:
+	@./_scripts/install-deps.sh $(ARGS)
+
 check:
 	@./_scripts/check.sh
 
 start:
 	@./_scripts/startup.sh
+
+start-step:
+	@./_scripts/start-step.sh
+
+start-manual:
+	@./_scripts/start-manual.sh
 
 test:
 	@./_scripts/test.sh
