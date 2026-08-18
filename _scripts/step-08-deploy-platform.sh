@@ -9,15 +9,21 @@
 # Part of the step-by-step alternative to startup.sh - see
 # ./_scripts/start-step.sh to run every step in order, or run this one
 # alone to redo just this part.
+#
+# Needs the venv active even though `apply` itself is a bash script: the
+# top-level `forgeops` dispatcher runs a python pre-flight check (via
+# whatever `python3` is on $PATH) before every subcommand except
+# `configure`.
 set -eo pipefail
 SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "$SCRIPTS_DIR/lib.sh"
 
-require_bin kubectl helm
+require_bin kubectl helm python3
 load_env
 cd "$ROOT_DIR"
 kubectl_ctx
+activate_venv
 
 if [[ "$PREREQS_MANUAL" == true ]]; then
   "$SCRIPTS_DIR/platform-images.sh" || true
