@@ -1,0 +1,36 @@
+# Traefik STATIC config for the docker-compose ingress.
+# Mounted at /etc/traefik/traefik.yml by docker-compose.override.yaml.
+# Routing lives in dynamic.yml (hot-reloaded); changes here need a restart of
+# the `ingress` service.
+
+entryPoints:
+  web:
+    address: ":80"
+    # The platform was bootstrapped against https://$DOMAIN - AM builds
+    # absolute URLs from the forwarded scheme, so keep everything on https
+    # and let plain http bounce.
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: false
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# Enables `traefik healthcheck --ping`, used by the compose healthcheck.
+ping:
+  entryPoint: traefik
+
+api:
+  dashboard: false
+
+log:
+  level: INFO
+
+accessLog: {}

@@ -117,7 +117,7 @@ applyChart() {
     fi
     echo $msg
     runOrPrint "helm upgrade $chart_repo \
-        ${version:+--version=$version} $ROLLBACK_FLAG \
+        ${version:+--version=$version} $ROLLBACK_FLAG --timeout=${HELM_TIMEOUT:-10m} \
         --namespace $namespace --install --reset-values \
         $opts $xtr_val_flag --create-namespace"
   fi
@@ -206,6 +206,7 @@ if [ "$INGRESS" = "traefik" ]; then
     ING_OPTS="--set deployment.replicas=2 \
 --set ingressClass.enabled=true \
 --set ingressRoute.dashboard.enabled=false \
+--set service.spec.type=NodePort \
 $NGINX_COMPAT_VALUES \
 --set providers.kubernetesIngress.publishedService.enabled=true \
 --set providers.kubernetesGateway.enabled=true \
