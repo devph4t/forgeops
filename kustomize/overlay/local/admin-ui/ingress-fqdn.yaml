@@ -1,0 +1,10 @@
+- op: replace
+  path: /spec/rules/0/host
+  value: ping-local.test.bbl
+- op: replace
+  path: /spec/tls/0/hosts
+  value:
+  - ping-local.test.bbl
+- op: add
+  path: /metadata/annotations/cert-manager.io~1cluster-issuer
+  value: default-issuer
